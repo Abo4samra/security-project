@@ -1,7 +1,7 @@
 import tkinter as tk
 import math
 import random
-import binascii 
+import binascii
 
 # ====================
 # HELPER FUNCTIONS (for RSA)
@@ -39,10 +39,11 @@ def modInverse(a, m):
 def generate_playfair_key(keyword):
     key_matrix = []
     alphabet = "ABCDEFGHIKLMNOPQRSTUVWXYZ"  # 'J' is omitted
-    keyword = keyword.upper().replace("J", "I")  # Replace 'J' with 'I'
+    # Use a default if keyword is empty, ensure it's processed correctly
+    processed_keyword = (keyword or "KEYWORD").upper().replace("J", "I")
     seen = set()
 
-    for char in keyword:
+    for char in processed_keyword:
         if char not in seen and char in alphabet:
             key_matrix.append(char)
             seen.add(char)
@@ -55,6 +56,7 @@ def generate_playfair_key(keyword):
     return [key_matrix[i:i+5] for i in range(0, 25, 5)]
 
 def playfair_encrypt(plaintext, keyword="KEYWORD"):
+    # Handle potentially empty keyword by defaulting inside generate_playfair_key
     key_matrix = generate_playfair_key(keyword)
     plaintext = plaintext.upper().replace("J", "I").replace(" ", "")
     if not plaintext: return "" # Handle empty input
@@ -101,6 +103,7 @@ def playfair_encrypt(plaintext, keyword="KEYWORD"):
     return ciphertext
 
 def playfair_decrypt(ciphertext, keyword="KEYWORD"):
+    # Handle potentially empty keyword by defaulting inside generate_playfair_key
     key_matrix = generate_playfair_key(keyword)
     ciphertext = ciphertext.upper().replace(" ", "")
     if not ciphertext or len(ciphertext) % 2 != 0: return "" # Handle empty/odd length input
@@ -131,23 +134,47 @@ def playfair_decrypt(ciphertext, keyword="KEYWORD"):
     final_plaintext = ""
     i = 0
     while i < len(plaintext):
-        final_plaintext += plaintext[i]
-        if i + 2 < len(plaintext) and plaintext[i] == plaintext[i+2] and plaintext[i+1] == 'X':
-            i += 2 # Skip the X and the repeated char
-        else:
-            i += 1
-    if final_plaintext.endswith('X') and len(final_plaintext) % 2 == 1: # check trailing X likely padding
-         final_plaintext = final_plaintext[:-1]
+      # Check for X used as padding between identical letters
+      if i + 2 < len(plaintext) and plaintext[i] == plaintext[i+2] and plaintext[i+1] == 'X':
+          final_plaintext += plaintext[i] # Keep the first letter
+          i += 2 # Skip the 'X' and the repeated second letter
+      # Check for final X used as padding for odd length
+      elif i == len(plaintext) - 1 and plaintext[i] == 'X':
+           # Check if the pair before it was NOT two identical letters
+           # (if it was, the 'X' was likely padding for identity, not length)
+           if not (i > 1 and plaintext[i-2] == plaintext[i] and plaintext[i-1] == 'X'):
+                # If the last char is X and likely padding for length, discard it
+                i += 1 # Effectively skips adding the last X
+           else:
+                # If the pattern indicates X was for identity, keep it (less common)
+                final_plaintext += plaintext[i]
+                i += 1
+      else:
+          final_plaintext += plaintext[i]
+          i += 1
 
+    # If the loop finished and the last character added was an X,
+    # and the original length was odd, it might be trailing padding.
+    # This logic is complex and imperfect.
+    # A truly reliable system needs a way to distinguish padding 'X' from message 'X'.
+    if final_plaintext.endswith('X') and len(plaintext) % 2 != 0:
+         # A slightly better heuristic: only remove if the second to last isn't the same
+         # as the third to last (less likely to be X padding identical letters)
+        if len(final_plaintext) < 3 or final_plaintext[-3] != final_plaintext[-1]:
+            # Check context to be more sure it's padding
+            # For this simple tool, we'll remove it if it *looks* like length padding
+            # A more advanced check could see if removing it creates a valid word, etc.
+            pass # Let's keep the heuristic removal simple for now, it's tricky
+            # final_plaintext = final_plaintext[:-1] # Re-enable if simple removal is desired
 
     return final_plaintext
+
 
 # --- Polyalphabetic (Vigenere) ---
 def polyalphabetic_encrypt(plaintext, keyword="KEY"):
     plaintext = plaintext.upper().replace(" ", "")
     if not plaintext: return ""
-    keyword = keyword.upper()
-    if not keyword: keyword = "KEY" # Default if empty
+    keyword = (keyword or "KEY").upper() # Default if empty
     ciphertext = ""
     keyword_len = len(keyword)
 
@@ -164,8 +191,7 @@ def polyalphabetic_encrypt(plaintext, keyword="KEY"):
 def polyalphabetic_decrypt(ciphertext, keyword="KEY"):
     ciphertext = ciphertext.upper().replace(" ", "")
     if not ciphertext: return ""
-    keyword = keyword.upper()
-    if not keyword: keyword = "KEY" # Default if empty
+    keyword = (keyword or "KEY").upper() # Default if empty
     plaintext = ""
     keyword_len = len(keyword)
 
@@ -180,89 +206,106 @@ def polyalphabetic_decrypt(ciphertext, keyword="KEY"):
     return plaintext
 
 # --- Transposition ---
-def transposition_encrypt(plaintext, key="KEY"):
-    if not key: key = "KEY" # Default if empty
-    key_order = sorted(range(len(key)), key=lambda k: key[k])
+# Using simplified key='3142' style transposition for easier key entry
+def get_transposition_order(key):
+    """ Converts a numeric key string like '3142' into the column order [1, 3, 0, 2] """
+    if not key or not key.isdigit():
+        key = "3142" # Default key if invalid or empty
+    # Create pairs of (digit, original_index)
+    key_pairs = [(int(digit), i) for i, digit in enumerate(key)]
+    # Sort by the digit, maintaining original index
+    key_pairs.sort()
+    # Return just the original indices in the sorted order
+    return [index for digit, index in key_pairs]
+
+def transposition_encrypt(plaintext, key="3142"):
+    key_order = get_transposition_order(key)
+    num_cols = len(key_order)
+    if num_cols == 0: return plaintext # Handle case where key becomes invalid/empty
+
     plaintext = plaintext.replace(" ", "").upper()
     if not plaintext: return ""
-    num_cols = len(key)
     num_rows = (len(plaintext) + num_cols - 1) // num_cols
 
     # Pad plaintext if needed
     padding_len = num_rows * num_cols - len(plaintext)
     plaintext += 'X' * padding_len # Using 'X' for padding
 
-    grid = [["" for _ in range(num_cols)] for _ in range(num_rows)]
+    grid = [['' for _ in range(num_cols)] for _ in range(num_rows)]
 
     idx = 0
     for row in range(num_rows):
         for col in range(num_cols):
-            grid[row][col] = plaintext[idx]
-            idx += 1
+            if idx < len(plaintext): # Ensure we don't go out of bounds
+                grid[row][col] = plaintext[idx]
+                idx += 1
 
     ciphertext = ""
-    for col in key_order:
+    for col_index in key_order: # Read based on the derived numeric order
         for row in range(num_rows):
-            ciphertext += grid[row][col]
+            ciphertext += grid[row][col_index]
 
     return ciphertext
 
-def transposition_decrypt(ciphertext, key="KEY"):
-    if not key: key = "KEY" # Default if empty
-    if not ciphertext: return ""
-    key_order = sorted(range(len(key)), key=lambda k: key[k])
-    num_cols = len(key)
-    num_rows = (len(ciphertext) + num_cols - 1) // num_cols
-    num_full_cols = len(ciphertext) % num_cols
-    if num_full_cols == 0 and len(ciphertext) > 0:
-        num_full_cols = num_cols
+def transposition_decrypt(ciphertext, key="3142"):
+    key_order = get_transposition_order(key)
+    num_cols = len(key_order)
+    if num_cols == 0 or not ciphertext : return ciphertext # Handle invalid key or empty text
 
-    grid = [["" for _ in range(num_cols)] for _ in range(num_rows)]
-    key_order_map = {order_index: original_index for original_index, order_index in enumerate(key_order)}
+    text_len = len(ciphertext)
+    num_rows = (text_len + num_cols - 1) // num_cols
+    num_shaded_cells = (num_cols * num_rows) - text_len
 
+    # Determine which columns in the *original* grid layout were shorter
+    # These correspond to the columns read *last* according to the key order
+    cols_in_read_order = key_order # Columns ordered by key [1, 3, 0, 2] for key '3142'
+    shorter_col_indices = cols_in_read_order[num_cols - num_shaded_cells:] # The last 'num_shaded_cells' columns read are shorter
+
+    grid = [['' for _ in range(num_cols)] for _ in range(num_rows)]
 
     idx = 0
-    # Determine column lengths
-    col_lengths = [num_rows] * num_cols
-    # Calculate shaded cells for irregular grids
-    num_shaded_cells = num_cols * num_rows - len(ciphertext)
-    shaded_cols = sorted(key_order, reverse=True)[:num_shaded_cells] # Columns that are shorter
-
-    for col_key_index in key_order: # Iterate in the order columns are read
+    for col_index in key_order: # Iterate through columns in the reading order
         rows_in_this_col = num_rows
-        original_col_index = key_order.index(col_key_index) # Find where this column index is in the sorted list
-
-        # Adjust row count for columns that might be shorter in non-perfect rectangles
-        if original_col_index >= (num_cols - num_shaded_cells) :
-             rows_in_this_col -=1
-
+        if col_index in shorter_col_indices:
+            rows_in_this_col -= 1
 
         for row in range(rows_in_this_col):
-             if idx < len(ciphertext):
-                 grid[row][col_key_index] = ciphertext[idx] # Place char using original column index
-                 idx += 1
-
+            if idx < text_len:
+                grid[row][col_index] = ciphertext[idx]
+                idx += 1
 
     plaintext = ""
     for row in range(num_rows):
         for col in range(num_cols):
             plaintext += grid[row][col]
 
+    # Remove padding 'X' based on original length before padding
+    original_len = text_len
+    padded_len = num_cols*num_rows
+    num_padding_chars = padded_len - original_len
 
-    # Attempt to remove trailing padding 'X' - may not be perfect
-    # A better way would be to store original length or use unambiguous padding
-    original_len_estimate = len(ciphertext)
-    while plaintext.endswith('X') and len(plaintext) > original_len_estimate - num_cols : # Heuristic
-         plaintext = plaintext[:-1]
+    # If the last 'num_padding_chars' are all 'X', remove them
+    if num_padding_chars > 0 and plaintext.endswith('X' * num_padding_chars):
+         plaintext = plaintext[:-num_padding_chars]
+    # Basic removal of trailing 'X' if the above fails (less reliable)
+    # elif plaintext.endswith('X'):
+    #     plaintext = plaintext.rstrip('X')
 
 
-    return plaintext.strip()
+    return plaintext
 
 
 # --- Rail Fence ---
 def rail_fence_encrypt(plaintext, rails=3):
+    # Ensure rails is an integer > 1
+    try:
+        rails = int(rails)
+        if rails <= 1: rails = 3 # Default if invalid
+    except ValueError:
+        rails = 3 # Default if not convertible to int
+
     plaintext = plaintext.replace(" ", "").upper()
-    if not plaintext or rails <= 1: return plaintext # No encryption if no text or 1 rail
+    if not plaintext: return plaintext # No encryption if no text
 
     rail_matrix = [""] * rails
     direction = 1
@@ -270,61 +313,83 @@ def rail_fence_encrypt(plaintext, rails=3):
 
     for char in plaintext:
         rail_matrix[row] += char
+        # Change direction at top or bottom rail
+        if row == 0:
+            direction = 1
+        elif row == rails - 1:
+            direction = -1
         row += direction
-        if row == rails - 1 or row == 0:
-            direction *= -1
 
     return "".join(rail_matrix)
 
 def rail_fence_decrypt(ciphertext, rails=3):
+     # Ensure rails is an integer > 1
+    try:
+        rails = int(rails)
+        if rails <= 1: rails = 3 # Default if invalid
+    except ValueError:
+        rails = 3 # Default if not convertible to int
+
     ciphertext = ciphertext.replace(" ", "").upper()
-    if not ciphertext or rails <= 1: return ciphertext
+    if not ciphertext: return ciphertext
 
     text_len = len(ciphertext)
     rail_lengths = [0] * rails
     direction = 1
     row = 0
 
-    # Calculate the length of each rail
+    # Simulate the fence writing to determine lengths
     for _ in range(text_len):
         rail_lengths[row] += 1
+        if row == 0:
+            direction = 1
+        elif row == rails - 1:
+            direction = -1
         row += direction
-        if row == rails - 1 or row == 0:
-            direction *= -1
 
     # Build the rails with ciphertext characters
     rail_matrix = []
     start = 0
     for length in rail_lengths:
+        # Take the correct slice from ciphertext for this rail
         rail_matrix.append(list(ciphertext[start : start + length]))
         start += length
 
-    # Read off the plaintext in zigzag pattern
+    # Read off the plaintext in zigzag pattern using rail counters
     plaintext = ""
     direction = 1
     row = 0
-    rail_indices = [0] * rails
+    rail_indices = [0] * rails # Track current read position in each rail list
 
     for _ in range(text_len):
+        # Take the next character from the *correct* rail list
         plaintext += rail_matrix[row][rail_indices[row]]
-        rail_indices[row] += 1
+        rail_indices[row] += 1 # Increment the index for the rail we just read from
+
+        # Move to the next rail for the next character
+        if row == 0:
+            direction = 1
+        elif row == rails - 1:
+            direction = -1
         row += direction
-        if row == rails - 1 or row == 0:
-            direction *= -1
 
     return plaintext
 
+
 # --- RSA (Simplified - NOT SECURE FOR REAL USE) ---
-def rsa_encrypt(plaintext, p=61, q=53, e=17):
+def rsa_encrypt(plaintext, p_str="61", q_str="53", e_str="17"):
     """
     Simplified RSA encryption. Encrypts ASCII value of each character.
-    p, q: Small prime numbers (hardcoded for demonstration).
-    e: Public exponent (hardcoded).
-    Returns ciphertext as space-separated numbers.
+    p_str, q_str, e_str: String inputs for parameters.
+    Returns ciphertext as space-separated numbers or ERROR message.
     WARNING: Not cryptographically secure!
     """
-    if not isinstance(p, int) or not isinstance(q, int) or not isinstance(e, int):
-        return "ERROR: p, q, e must be integers." # Basic type check
+    try:
+        p = int(p_str)
+        q = int(q_str)
+        e = int(e_str)
+    except ValueError:
+        return "ERROR: p, q, e must be valid integers."
 
     # Basic primality test (not robust for large numbers)
     def is_prime(n):
@@ -334,19 +399,17 @@ def rsa_encrypt(plaintext, p=61, q=53, e=17):
         return True
 
     # Very basic validation - real RSA needs much stronger checks
-    if not (is_prime(p) and is_prime(q)):
-         return f"ERROR: p={p} or q={q} not prime (basic check)."
-    if p == q:
-         return "ERROR: p and q cannot be equal."
+    if not is_prime(p): return f"ERROR: p={p} not prime (basic check)."
+    if not is_prime(q): return f"ERROR: q={q} not prime (basic check)."
+    if p == q: return "ERROR: p and q cannot be equal."
 
     n = p * q
     phi = (p - 1) * (q - 1)
 
     if gcd(e, phi) != 1:
-         return f"ERROR: e={e} is not coprime to phi={phi}."
+        return f"ERROR: e={e} is not coprime to phi={phi}."
     if not (1 < e < phi):
-         return f"ERROR: e={e} must be > 1 and < phi={phi}."
-
+        return f"ERROR: e={e} must be > 1 and < phi={phi}."
 
     # Encrypt each character's ASCII value
     ciphertext_nums = []
@@ -354,21 +417,30 @@ def rsa_encrypt(plaintext, p=61, q=53, e=17):
         m = ord(char) # Convert char to ASCII integer
         if m >= n:
              # This simple version can't handle chars whose ordinals >= n
-             return f"ERROR: Character '{char}' (ASCII {m}) cannot be encrypted with n={n}."
-        c = pow(m, e, n) # Efficiently calculates (m^e) % n
-        ciphertext_nums.append(str(c))
+             return f"ERROR: Character '{char}' (ASCII {m}) cannot be encrypted with n={n} (p={p}, q={q})."
+        try:
+            c = pow(m, e, n) # Efficiently calculates (m^e) % n
+            ciphertext_nums.append(str(c))
+        except ValueError as ve:
+             return f"ERROR during exponentiation: {ve}"
+
 
     return " ".join(ciphertext_nums) # Return space-separated numbers
 
-def rsa_decrypt(ciphertext_str, p=61, q=53, e=17):
+def rsa_decrypt(ciphertext_str, p_str="61", q_str="53", e_str="17"):
     """
     Simplified RSA decryption. Decrypts space-separated numbers to text.
-    Uses the same hardcoded p, q, e to derive the private key d.
+    Uses the p, q, e strings to derive the private key d.
     WARNING: Not cryptographically secure!
     """
     if not ciphertext_str: return ""
-    if not isinstance(p, int) or not isinstance(q, int) or not isinstance(e, int):
-        return "ERROR: p, q, e must be integers."
+    try:
+        p = int(p_str)
+        q = int(q_str)
+        e = int(e_str)
+    except ValueError:
+        return "ERROR: p, q, e must be valid integers."
+
 
     # Basic primality test (not robust for large numbers)
     def is_prime(n):
@@ -378,7 +450,8 @@ def rsa_decrypt(ciphertext_str, p=61, q=53, e=17):
         return True
 
     # Very basic validation
-    if not (is_prime(p) and is_prime(q)): return f"ERROR: p={p} or q={q} not prime (basic check)."
+    if not is_prime(p): return f"ERROR: p={p} not prime (basic check)."
+    if not is_prime(q): return f"ERROR: q={q} not prime (basic check)."
     if p == q: return "ERROR: p and q cannot be equal."
 
     n = p * q
@@ -402,12 +475,16 @@ def rsa_decrypt(ciphertext_str, p=61, q=53, e=17):
     for c in ciphertext_nums:
         if c >= n:
              return f"ERROR: Ciphertext value {c} is >= n={n}."
-        m = pow(c, d, n) # Efficiently calculates (c^d) % n
+        try:
+            m = pow(c, d, n) # Efficiently calculates (c^d) % n
+        except ValueError as ve:
+             return f"ERROR during exponentiation: {ve}"
+
         try:
              plaintext += chr(m) # Convert back to character
         except ValueError:
-              # Handle cases where decrypted value isn't a valid ASCII/Unicode char
-              plaintext += f"[ERR:{m}]"
+             # Handle cases where decrypted value isn't a valid ASCII/Unicode char
+             plaintext += f"[ERR:{m}]"
 
     return plaintext
 
@@ -416,6 +493,10 @@ def rc4_ksa(key_str):
     """Key Scheduling Algorithm for RC4."""
     key = key_str.encode('utf-8') # Convert key string to bytes
     key_length = len(key)
+    if key_length == 0: # Handle empty key case
+        key = b"RC4KEY" # Use a default key if empty
+        key_length = len(key)
+
     S = list(range(256))
     j = 0
     for i in range(256):
@@ -427,20 +508,23 @@ def rc4_prga(S):
     """Pseudo-Random Generation Algorithm (PRGA) for RC4 - yields keystream bytes."""
     i = 0
     j = 0
+    # Need a copy so the original S in the caller isn't modified if PRGA is reused
+    S_copy = S[:]
     while True:
         i = (i + 1) % 256
-        j = (j + S[i]) % 256
-        S[i], S[j] = S[j], S[i] # Swap
-        K = S[(S[i] + S[j]) % 256]
+        j = (j + S_copy[i]) % 256
+        S_copy[i], S_copy[j] = S_copy[j], S_copy[i] # Swap using the copy
+        K = S_copy[(S_copy[i] + S_copy[j]) % 256]
         yield K
 
-def rc4_encrypt_decrypt(text, key_str="RC4KEY"):
+def rc4_encrypt_decrypt(text_bytes, key_str="RC4KEY"):
     """RC4 encryption/decryption function (XOR operation is symmetric)."""
-    if not key_str: key_str = "RC4KEY" # Default if empty
+    # Ensure key is not empty, provide default if needed
+    if not key_str: key_str = "RC4KEY"
     try:
         S = rc4_ksa(key_str)
         keystream = rc4_prga(S)
-        result_bytes = bytes([b ^ next(keystream) for b in text])
+        result_bytes = bytes([b ^ next(keystream) for b in text_bytes])
         return result_bytes
     except Exception as e:
         print(f"RC4 Error: {e}") # Log error
@@ -463,6 +547,9 @@ def rc4_decrypt(ciphertext_hex, key_str="RC4KEY"):
     """RC4 Decrypt: hex string -> text"""
     if not ciphertext_hex: return ""
     try:
+        # Ensure hex string has even length
+        if len(ciphertext_hex) % 2 != 0:
+            return "ERROR: Invalid Hex ciphertext (odd length)."
         ciphertext_bytes = binascii.unhexlify(ciphertext_hex.encode('utf-8'))
         decrypted_bytes = rc4_encrypt_decrypt(ciphertext_bytes, key_str)
         if decrypted_bytes is None: return "ERROR: RC4 decryption failed."
@@ -480,113 +567,204 @@ def rc4_decrypt(ciphertext_hex, key_str="RC4KEY"):
 
 # Create the main window
 root = tk.Tk()
-root.title("Encryption/Decryption App")
-# Increased height to accommodate new rows
-root.geometry("800x275") # Adjusted height
+root.title("Cipher Suite")
+# Increased width and height to accommodate new fields and rows
+root.geometry("1100x280") # Adjusted width and height
 
-# Create variables for input/output fields
+
+# --- StringVars for Inputs/Outputs/Keys ---
+# Playfair
 playfair_input = tk.StringVar()
 playfair_output = tk.StringVar()
+playfair_keyword_var = tk.StringVar(value="KEYWORD") # Added for Playfair key
 
+# Polyalphabetic (Vigenere) - Added key var
 polyalphabetic_input = tk.StringVar()
 polyalphabetic_output = tk.StringVar()
+polyalphabetic_key_var = tk.StringVar(value="KEY")
 
+# Transposition - Added key var (using numeric string style)
 transposition_input = tk.StringVar()
 transposition_output = tk.StringVar()
+transposition_key_var = tk.StringVar(value="3142") # Example numeric key
 
+# Rail Fence - Added key var (number of rails)
 rail_fence_input = tk.StringVar()
 rail_fence_output = tk.StringVar()
-# --- New Variables ---
+rail_fence_key_var = tk.StringVar(value="3") # Rails key
+
+# RSA - Added parameter vars
 rsa_input = tk.StringVar()
 rsa_output = tk.StringVar()
+rsa_p_var = tk.StringVar(value="61")
+rsa_q_var = tk.StringVar(value="53")
+rsa_e_var = tk.StringVar(value="17")
 
+# RC4 - Added key var
 rc4_input = tk.StringVar()
 rc4_output = tk.StringVar()
-# --- End New Variables ---
+rc4_key_var = tk.StringVar(value="RC4KEY")
 
-# Function to handle encryption for all left boxes
+
+# --- Encryption/Decryption Handlers ---
 def encrypt_all():
-    # Get inputs
+    # Get Playfair inputs
     pf_in = playfair_input.get()
+    pf_key = playfair_keyword_var.get()
+    playfair_output.set(playfair_encrypt(pf_in, keyword=pf_key))
+
+    # Get Polyalphabetic inputs
     poly_in = polyalphabetic_input.get()
+    poly_key = polyalphabetic_key_var.get()
+    polyalphabetic_output.set(polyalphabetic_encrypt(poly_in, keyword=poly_key))
+
+    # Get Transposition inputs
     trans_in = transposition_input.get()
+    trans_key = transposition_key_var.get()
+    transposition_output.set(transposition_encrypt(trans_in, key=trans_key))
+
+    # Get Rail Fence inputs
     rail_in = rail_fence_input.get()
+    rail_key = rail_fence_key_var.get() # Get rails value
+    rail_fence_output.set(rail_fence_encrypt(rail_in, rails=rail_key)) # Pass rails key
+
+    # Get RSA inputs
     rsa_in = rsa_input.get()
+    rsa_p = rsa_p_var.get()
+    rsa_q = rsa_q_var.get()
+    rsa_e = rsa_e_var.get()
+    rsa_output.set(rsa_encrypt(rsa_in, p_str=rsa_p, q_str=rsa_q, e_str=rsa_e))
+
+    # Get RC4 inputs
     rc4_in = rc4_input.get()
+    rc4_key = rc4_key_var.get()
+    rc4_output.set(rc4_encrypt(rc4_in, key_str=rc4_key))
 
-    # Perform encryption - using default keys/params for simplicity here
-    # TODO: Add entry fields for keys/params if desired
-    playfair_output.set(playfair_encrypt(pf_in))
-    polyalphabetic_output.set(polyalphabetic_encrypt(poly_in))
-    transposition_output.set(transposition_encrypt(trans_in))
-    rail_fence_output.set(rail_fence_encrypt(rail_in))
-    rsa_output.set(rsa_encrypt(rsa_in)) # Using default p, q, e
-    rc4_output.set(rc4_encrypt(rc4_in)) # Using default key
 
-# Function to handle decryption for all right boxes
 def decrypt_all():
-    # Get inputs (from the output fields)
+    # Get Playfair inputs (from output field)
     pf_out = playfair_output.get()
-    poly_out = polyalphabetic_output.get()
-    trans_out = transposition_output.get()
-    rail_out = rail_fence_output.get()
-    rsa_out = rsa_output.get()
-    rc4_out = rc4_output.get()
+    pf_key = playfair_keyword_var.get() # Use the same key for decryption
+    playfair_input.set(playfair_decrypt(pf_out, keyword=pf_key))
 
-    # Perform decryption - using default keys/params for simplicity here
-    playfair_input.set(playfair_decrypt(pf_out))
-    polyalphabetic_input.set(polyalphabetic_decrypt(poly_out))
-    transposition_input.set(transposition_decrypt(trans_out))
-    rail_fence_input.set(rail_fence_decrypt(rail_out))
-    rsa_input.set(rsa_decrypt(rsa_out)) # Using default p, q, e
-    rc4_input.set(rc4_decrypt(rc4_out)) # Using default key
+    # Get Polyalphabetic inputs
+    poly_out = polyalphabetic_output.get()
+    poly_key = polyalphabetic_key_var.get()
+    polyalphabetic_input.set(polyalphabetic_decrypt(poly_out, keyword=poly_key))
+
+    # Get Transposition inputs
+    trans_out = transposition_output.get()
+    trans_key = transposition_key_var.get()
+    transposition_input.set(transposition_decrypt(trans_out, key=trans_key))
+
+    # Get Rail Fence inputs
+    rail_out = rail_fence_output.get()
+    rail_key = rail_fence_key_var.get() # Get rails value
+    rail_fence_input.set(rail_fence_decrypt(rail_out, rails=rail_key)) # Pass rails key
+
+    # Get RSA inputs
+    rsa_out = rsa_output.get()
+    rsa_p = rsa_p_var.get()
+    rsa_q = rsa_q_var.get()
+    rsa_e = rsa_e_var.get()
+    rsa_input.set(rsa_decrypt(rsa_out, p_str=rsa_p, q_str=rsa_q, e_str=rsa_e))
+
+    # Get RC4 inputs
+    rc4_out = rc4_output.get()
+    rc4_key = rc4_key_var.get()
+    rc4_input.set(rc4_decrypt(rc4_out, key_str=rc4_key))
+
 
 # --- GUI Layout ---
-label_font = ("Arial", 12)
+label_font = ("Arial", 10, "bold")
 entry_font = ("Arial", 10)
-entry_width = 40
-padx_val = 10
-pady_val = 5 # Reduced vertical padding slightly
+main_entry_width = 45 # Width for Plaintext/Ciphertext
+key_entry_width = 15  # Width for Key/Parameter entries
+padx_val = 5
+pady_val = 3
+sticky_ew = "ew" # Stretch horizontally
 
-# Row 0: Playfair
-tk.Label(root, text="Playfair", font=label_font).grid(row=0, column=0, padx=padx_val, pady=pady_val, sticky="w")
-tk.Entry(root, textvariable=playfair_input, width=entry_width, font=entry_font).grid(row=0, column=1, padx=padx_val, pady=pady_val)
-tk.Entry(root, textvariable=playfair_output, width=entry_width, font=entry_font).grid(row=0, column=2, padx=padx_val, pady=pady_val)
+# --- Column Headers ---
+tk.Label(root, text="Cipher", font=label_font).grid(row=0, column=0, padx=padx_val, pady=pady_val*2, sticky="w")
+tk.Label(root, text="Key/Params", font=label_font).grid(row=0, column=1, padx=padx_val, pady=pady_val*2, sticky="w")
+tk.Label(root, text="Plaintext", font=label_font).grid(row=0, column=2, padx=padx_val, pady=pady_val*2, sticky="w")
+tk.Label(root, text="Ciphertext", font=label_font).grid(row=0, column=3, padx=padx_val, pady=pady_val*2, sticky="w")
 
-# Row 1: Polyalphabetic
-tk.Label(root, text="Polyalphabetic", font=label_font).grid(row=1, column=0, padx=padx_val, pady=pady_val, sticky="w")
-tk.Entry(root, textvariable=polyalphabetic_input, width=entry_width, font=entry_font).grid(row=1, column=1, padx=padx_val, pady=pady_val)
-tk.Entry(root, textvariable=polyalphabetic_output, width=entry_width, font=entry_font).grid(row=1, column=2, padx=padx_val, pady=pady_val)
 
-# Row 2: Transposition
-tk.Label(root, text="Transposition", font=label_font).grid(row=2, column=0, padx=padx_val, pady=pady_val, sticky="w")
-tk.Entry(root, textvariable=transposition_input, width=entry_width, font=entry_font).grid(row=2, column=1, padx=padx_val, pady=pady_val)
-tk.Entry(root, textvariable=transposition_output, width=entry_width, font=entry_font).grid(row=2, column=2, padx=padx_val, pady=pady_val)
+# Row 1: Playfair
+row_num = 1
+tk.Label(root, text="Playfair", anchor="w").grid(row=row_num, column=0, padx=padx_val, pady=pady_val, sticky="w")
+tk.Entry(root, textvariable=playfair_keyword_var, width=key_entry_width, font=entry_font).grid(row=row_num, column=1, padx=padx_val, pady=pady_val, sticky=sticky_ew)
+tk.Entry(root, textvariable=playfair_input, width=main_entry_width, font=entry_font).grid(row=row_num, column=2, padx=padx_val, pady=pady_val, sticky=sticky_ew)
+tk.Entry(root, textvariable=playfair_output, width=main_entry_width, font=entry_font).grid(row=row_num, column=3, padx=padx_val, pady=pady_val, sticky=sticky_ew)
 
-# Row 3: Rail Fence
-tk.Label(root, text="Rail Fence", font=label_font).grid(row=3, column=0, padx=padx_val, pady=pady_val, sticky="w")
-tk.Entry(root, textvariable=rail_fence_input, width=entry_width, font=entry_font).grid(row=3, column=1, padx=padx_val, pady=pady_val)
-tk.Entry(root, textvariable=rail_fence_output, width=entry_width, font=entry_font).grid(row=3, column=2, padx=padx_val, pady=pady_val)
+# Row 2: Polyalphabetic (Vigenere)
+row_num = 2
+tk.Label(root, text="Vigenere", anchor="w").grid(row=row_num, column=0, padx=padx_val, pady=pady_val, sticky="w")
+tk.Entry(root, textvariable=polyalphabetic_key_var, width=key_entry_width, font=entry_font).grid(row=row_num, column=1, padx=padx_val, pady=pady_val, sticky=sticky_ew)
+tk.Entry(root, textvariable=polyalphabetic_input, width=main_entry_width, font=entry_font).grid(row=row_num, column=2, padx=padx_val, pady=pady_val, sticky=sticky_ew)
+tk.Entry(root, textvariable=polyalphabetic_output, width=main_entry_width, font=entry_font).grid(row=row_num, column=3, padx=padx_val, pady=pady_val, sticky=sticky_ew)
 
-# --- Row 4: RSA ---
-tk.Label(root, text="RSA (Simple)", font=label_font).grid(row=4, column=0, padx=padx_val, pady=pady_val, sticky="w")
-tk.Entry(root, textvariable=rsa_input, width=entry_width, font=entry_font).grid(row=4, column=1, padx=padx_val, pady=pady_val)
-tk.Entry(root, textvariable=rsa_output, width=entry_width, font=entry_font).grid(row=4, column=2, padx=padx_val, pady=pady_val)
+# Row 3: Transposition
+row_num = 3
+tk.Label(root, text="Transposition", anchor="w").grid(row=row_num, column=0, padx=padx_val, pady=pady_val, sticky="w")
+tk.Entry(root, textvariable=transposition_key_var, width=key_entry_width, font=entry_font).grid(row=row_num, column=1, padx=padx_val, pady=pady_val, sticky=sticky_ew)
+tk.Entry(root, textvariable=transposition_input, width=main_entry_width, font=entry_font).grid(row=row_num, column=2, padx=padx_val, pady=pady_val, sticky=sticky_ew)
+tk.Entry(root, textvariable=transposition_output, width=main_entry_width, font=entry_font).grid(row=row_num, column=3, padx=padx_val, pady=pady_val, sticky=sticky_ew)
 
-# --- Row 5: RC4 ---
-tk.Label(root, text="RC4", font=label_font).grid(row=5, column=0, padx=padx_val, pady=pady_val, sticky="w")
-tk.Entry(root, textvariable=rc4_input, width=entry_width, font=entry_font).grid(row=5, column=1, padx=padx_val, pady=pady_val)
-tk.Entry(root, textvariable=rc4_output, width=entry_width, font=entry_font).grid(row=5, column=2, padx=padx_val, pady=pady_val)
+# Row 4: Rail Fence
+row_num = 4
+tk.Label(root, text="Rail Fence (Rails)", anchor="w").grid(row=row_num, column=0, padx=padx_val, pady=pady_val, sticky="w")
+tk.Entry(root, textvariable=rail_fence_key_var, width=key_entry_width, font=entry_font).grid(row=row_num, column=1, padx=padx_val, pady=pady_val, sticky=sticky_ew)
+tk.Entry(root, textvariable=rail_fence_input, width=main_entry_width, font=entry_font).grid(row=row_num, column=2, padx=padx_val, pady=pady_val, sticky=sticky_ew)
+tk.Entry(root, textvariable=rail_fence_output, width=main_entry_width, font=entry_font).grid(row=row_num, column=3, padx=padx_val, pady=pady_val, sticky=sticky_ew)
 
-# --- Row 6: Buttons ---
+# --- Row 5: RSA ---
+row_num = 5
+tk.Label(root, text="RSA (p, q, e)", anchor="w").grid(row=row_num, column=0, padx=padx_val, pady=pady_val, sticky="w")
+# Frame to hold the multiple RSA parameter entries in one column
+rsa_param_frame = tk.Frame(root)
+rsa_param_frame.grid(row=row_num, column=1, padx=padx_val, pady=pady_val, sticky=sticky_ew)
+tk.Entry(rsa_param_frame, textvariable=rsa_p_var, width=4, font=entry_font).pack(side=tk.LEFT, padx=1)
+tk.Entry(rsa_param_frame, textvariable=rsa_q_var, width=4, font=entry_font).pack(side=tk.LEFT, padx=1)
+tk.Entry(rsa_param_frame, textvariable=rsa_e_var, width=4, font=entry_font).pack(side=tk.LEFT, padx=1)
+tk.Entry(root, textvariable=rsa_input, width=main_entry_width, font=entry_font).grid(row=row_num, column=2, padx=padx_val, pady=pady_val, sticky=sticky_ew)
+tk.Entry(root, textvariable=rsa_output, width=main_entry_width, font=entry_font).grid(row=row_num, column=3, padx=padx_val, pady=pady_val, sticky=sticky_ew)
+
+
+# --- Row 6: RC4 ---
+row_num = 6
+tk.Label(root, text="RC4", anchor="w").grid(row=row_num, column=0, padx=padx_val, pady=pady_val, sticky="w")
+tk.Entry(root, textvariable=rc4_key_var, width=key_entry_width, font=entry_font).grid(row=row_num, column=1, padx=padx_val, pady=pady_val, sticky=sticky_ew)
+tk.Entry(root, textvariable=rc4_input, width=main_entry_width, font=entry_font).grid(row=row_num, column=2, padx=padx_val, pady=pady_val, sticky=sticky_ew)
+tk.Entry(root, textvariable=rc4_output, width=main_entry_width, font=entry_font).grid(row=row_num, column=3, padx=padx_val, pady=pady_val, sticky=sticky_ew)
+
+
+# --- Row 7: Buttons ---
 button_pady = 15
-tk.Button(root, text="Encrypt All", command=encrypt_all, font=label_font, width=15).grid(row=6, column=1, pady=button_pady)
-tk.Button(root, text="Decrypt All", command=decrypt_all, font=label_font, width=15).grid(row=6, column=2, pady=button_pady)
+button_padx = 10
+button_font = ("Arial", 11, "bold")
+button_width = 15
 
-# Configure grid weights for resizing (optional but good practice)
-root.grid_columnconfigure(0, weight=0) # Label column fixed width
-root.grid_columnconfigure(1, weight=1) # Input column expands
-root.grid_columnconfigure(2, weight=1) # Output column expands
+# Frame to center buttons below input/output columns
+button_frame = tk.Frame(root)
+# Place this frame spanning columns 2 and 3, below the last cipher row
+button_frame.grid(row=row_num + 1, column=3, columnspan=2, pady=button_pady)
+
+tk.Button(button_frame, text="Encrypt All", command=encrypt_all, font=button_font, width=button_width).pack(side=tk.LEFT, padx=button_padx)
+tk.Button(button_frame, text="Decrypt All", command=decrypt_all, font=button_font, width=button_width).pack(side=tk.LEFT, padx=button_padx)
+
+
+# Configure grid weights for resizing
+root.grid_columnconfigure(0, weight=0) # Cipher Label column fixed width
+root.grid_columnconfigure(1, weight=0) # Key/Params column fixed width (or use weight=1 if you want it to expand too)
+root.grid_columnconfigure(2, weight=1) # Plaintext column expands
+root.grid_columnconfigure(3, weight=1) # Ciphertext column expands
+
+# Configure row weights (optional, allows vertical expansion if needed)
+for i in range(row_num + 2): # +1 for last cipher row, +1 for button row
+    root.grid_rowconfigure(i, weight=0) # Usually keep rows fixed height
+# You could give the button row weight=1 if you wanted it to be pushed down on resize
 
 # Start the Tkinter event loop
 root.mainloop()
